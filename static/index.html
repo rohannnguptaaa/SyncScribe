@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SyncScribe | Collaborative Workspace</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --primary-blue: #007bff;
+            --text-main: #212529;
+            --border-color: #dee2e6;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .workspace {
+            width: 90%;
+            max-width: 900px;
+            background: var(--card-bg);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        header {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+
+        .status {
+            font-size: 0.8rem;
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: #e7f3ff;
+            color: var(--primary-blue);
+            font-weight: 500;
+        }
+
+        textarea {
+            width: 100%;
+            height: 450px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            font-family: "Fira Code", "Courier New", monospace;
+            font-size: 16px;
+            line-height: 1.6;
+            resize: none;
+            outline: none;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+
+        textarea:focus {
+            border-color: var(--primary-blue);
+        }
+
+        footer {
+            margin-top: 15px;
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="workspace">
+        <header>
+            <h1>🛡️ SyncScribe</h1>
+            <div id="connection-status" class="status">Connecting...</div>
+        </header>
+        
+        <textarea id="editor" placeholder="Start typing to collaborate..."></textarea>
+        
+        <footer>
+            Built with Go & CRDTs • Distributed Systems Project
+        </footer>
+    </div>
+
+    <script>
+        const editor = document.getElementById('editor');
+        const status = document.getElementById('connection-status');
+        const socket = new WebSocket("ws://" + window.location.host + "/ws");
+        
+        let remoteDoc = [];
+        let localCursorPos = 0;
+
+        socket.onopen = () => {
+            status.innerText = "● Connected";
+            status.style.background = "#d4edda";
+            status.style.color = "#155724";
+        };
+
+        socket.onmessage = (event) => {
+            const incomingChar = JSON.parse(event.data);
+            
+            // Avoid duplicates
+            if (!remoteDoc.some(c => c.id === incomingChar.id)) {
+                remoteDoc.push(incomingChar);
+            }
+            
+            renderEditor();
+        };
+
+        function renderEditor() {
+            // Sort by position
+            remoteDoc.sort((a, b) => a.position - b.position);
+            
+            const content = remoteDoc.map(c => c.value).join('');
+            
+            // Update value
+            editor.value = content;
+            
+            // Re-apply the tracked cursor position
+            editor.setSelectionRange(localCursorPos, localCursorPos);
+        }
+
+        editor.addEventListener('keypress', (e) => {
+            e.preventDefault();
+            
+            const visibleChars = [...remoteDoc].sort((a, b) => a.position - b.position);
+            const cursorAt = editor.selectionStart;
+            let newPos;
+
+            // Positioning Logic
+            if (visibleChars.length === 0) {
+                newPos = 1000.0;
+            } else if (cursorAt >= visibleChars.length) {
+                newPos = visibleChars[visibleChars.length - 1].position + 1000.0;
+            } else if (cursorAt === 0) {
+                newPos = visibleChars[0].position - 1000.0;
+            } else {
+                const before = visibleChars[cursorAt - 1].position;
+                const after = visibleChars[cursorAt].position;
+                newPos = (before + after) / 2;
+            }
+
+            const charOp = {
+                id: Math.random().toString(36).substring(2, 15),
+                value: e.key,
+                position: newPos,
+                timestamp: new Date().toISOString(),
+                deleted: false
+            };
+            
+            // Move our local tracker forward before sending
+            localCursorPos = cursorAt + 1;
+            
+            socket.send(JSON.stringify(charOp));
+        });
+
+        // Track manual cursor movements (clicks/arrow keys)
+        const updateCursorTracker = () => {
+            localCursorPos = editor.selectionStart;
+        };
+        editor.addEventListener('mousedown', () => setTimeout(updateCursorTracker, 0));
+        editor.addEventListener('keydown', (e) => {
+            if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+                setTimeout(updateCursorTracker, 0);
+            }
+        });
+    </script>
+</body>
+</html>
